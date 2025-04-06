@@ -2,10 +2,12 @@ import cv2
 import numpy as np
 import json
 import base64
-import pytesseract # type: ignore
-from pytesseract import Output # type: ignore
 import logging
 import os
+import pytesseract
+
+# Add at top of file with other imports
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 DEBUG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'debug')
 os.makedirs(DEBUG_DIR, exist_ok=True)
@@ -14,8 +16,6 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Configure Tesseract path for Windows
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 def validate_image(image_path):
     """Validate image file before processing"""
@@ -210,211 +210,88 @@ def draw_grid_debug(image, grid_cells, num_cols, num_rows):
 
 # ...existing imports and helper functions remain unchanged until detect_text_elements...
 
-def detect_text_elements(image, grid_cells):
-    """Detect black text elements and assign them to grid cells"""
-    try:
-# Replace from line 213 (after try block) with:
 
-        # Initialize single debug image at the start
+
+def detect_text_elements(image, grid_cells):
+    """Detect any letter or number in grid cells using Tesseract OCR"""
+    try:
         debug_image = image.copy()
+        height, width = image.shape[:2]
         
-        # Convert to grayscale and normalize
+        # Calculate cell dimensions
+        num_cols = len(set(c['x'] for c in grid_cells))
+        num_rows = len(set(c['y'] for c in grid_cells))
+        cell_width = width / num_cols
+        cell_height = height / num_rows
+        
+        # Preprocess image
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+        # Increase contrast
+        gray = cv2.convertScaleAbs(gray, alpha=1.5, beta=0)
+        # Denoise
+        gray = cv2.fastNlMeansDenoising(gray)
+        # Adaptive threshold
+        thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
         
-        # Apply bilateral filter to preserve edges while reducing noise
-        gray = cv2.bilateralFilter(gray, 11, 17, 17)
+        processed_cells = []
+        for cell in grid_cells:
+            # Calculate cell boundaries with margin
+            margin = 0.1  # 10% margin
+            cell_x = int((cell['x'] - 1) * cell_width)
+            cell_y = int((num_rows - cell['y']) * cell_height)
+            
+            # Add margin to ROI
+            roi_x = max(0, cell_x + int(cell_width * margin))
+            roi_y = max(0, cell_y + int(cell_height * margin))
+            roi_w = min(int(cell_width * (1 - 2*margin)), width - roi_x)
+            roi_h = min(int(cell_height * (1 - 2*margin)), height - roi_y)
+            
+            # Extract cell ROI
+            roi = thresh[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
+            if roi.size == 0:
+                continue
+            
+            # Scale up ROI for better OCR
+            roi = cv2.resize(roi, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+            
+            # OCR configuration
+            custom_config = r'--oem 3 --psm 10 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+            
+            # Perform OCR
+            text = pytesseract.image_to_string(roi, config=custom_config).strip()
+            
+            cell_info = {
+                'x': cell['x'],
+                'y': cell['y'],
+                'element': text.upper() if text else 'none'
+            }
+            
+            # Draw debug visualization
+            if cell_info['element'] != 'none':
+                cv2.rectangle(debug_image, 
+                            (roi_x, roi_y), 
+                            (roi_x + roi_w, roi_y + roi_h), 
+                            (0, 255, 0), 2)
+                cv2.putText(debug_image, 
+                          cell_info['element'],
+                          (roi_x, roi_y - 5),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.5, (0, 0, 255), 2)
+            
+            # Save individual cell ROI for debugging
+            cv2.imwrite(
+                os.path.join(DEBUG_DIR, f'cell_{cell["x"]}_{cell["y"]}.png'), 
+                roi
+            )
+            
+            processed_cells.append(cell_info)
         
-        # Apply CLAHE with lower clip limit for better contrast
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        gray = clahe.apply(gray)
-        
-        # More lenient thresholds with broader range
-        thresholds = [
-            (0, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU),  # Otsu's method
-            (40, cv2.THRESH_BINARY_INV),                    # Light text
-            (80, cv2.THRESH_BINARY_INV),                    # Medium text
-            (120, cv2.THRESH_BINARY_INV),                   # Dark text
-            (160, cv2.THRESH_BINARY_INV)                    # Very dark text
-        ]
-        
-        # Save preprocessing debug image
-        cv2.imwrite(os.path.join(DEBUG_DIR, 'preprocess_debug.png'), gray)
-        
-        # Initialize elements list
-        all_elements = []
-        
-        # Process each threshold
-        for thresh, thresh_type in thresholds:
-            if thresh == 0:
-                _, black_mask = cv2.threshold(gray, 0, 255, thresh_type)
-            else:
-                _, black_mask = cv2.threshold(gray, thresh, 255, thresh_type)
-            
-            # Enhanced morphological operations
-            kernel_open = np.ones((3,3), np.uint8)
-            kernel_close = np.ones((3,3), np.uint8)
-            black_mask = cv2.morphologyEx(black_mask, cv2.MORPH_OPEN, kernel_open)
-            black_mask = cv2.morphologyEx(black_mask, cv2.MORPH_CLOSE, kernel_close)
-            
-            # Save threshold debug image
-            cv2.imwrite(os.path.join(DEBUG_DIR, f'threshold_{thresh}_debug.png'), black_mask)
-            
-            contours_all = []
-            for mode in [cv2.RETR_EXTERNAL, cv2.RETR_LIST]:
-                contours, _ = cv2.findContours(black_mask, mode, cv2.CHAIN_APPROX_SIMPLE)
-                contours_all.extend(contours)
-            
-            for contour in contours_all:
-                area = cv2.contourArea(contour)
-                if area < 15 or area > 10000:
-                    continue
-                
-                x, y, w, h = cv2.boundingRect(contour)
-                aspect_ratio = float(w)/h
-                if aspect_ratio < 0.1 or aspect_ratio > 10.0:
-                    continue
-                
-                hull_area = cv2.contourArea(cv2.convexHull(contour))
-                solidity = area / hull_area if hull_area > 0 else 0
-                if solidity < 0.1:
-                    continue
-                
-                center_x = x + w//2
-                center_y = y + h//2
-                
-                pad = 30
-                roi = gray[max(0, y-pad):min(y+h+pad, image.shape[0]), 
-                          max(0, x-pad):min(x+w+pad, image.shape[1])]
-                
-                if roi.size == 0:
-                    continue
-                
-                roi = cv2.resize(roi, (0,0), fx=10, fy=10)
-                roi = clahe.apply(roi)
-                roi = cv2.GaussianBlur(roi, (3,3), 0)
-                
-                try:
-                    configs = [
-                        '--psm 10 --oem 3 -c tessedit_char_whitelist=ABCD',
-                        '--psm 8 --oem 3 -c tessedit_char_whitelist=ABCD',
-                        '--psm 6 --oem 3 -c tessedit_char_whitelist=ABCD',
-                        '--psm 13 --oem 3 -c tessedit_char_whitelist=ABCD'
-                    ]
-                    
-                    for config in configs:
-                        text = pytesseract.image_to_string(roi, config=config).strip()
-                        if text and len(text) == 1 and text in 'ABCD':
-                            if not any(abs(e['x'] - center_x) < 40 and 
-                                     abs(e['y'] - center_y) < 40 and
-                                     e['text'] == text
-                                     for e in all_elements):
-                                
-                                all_elements.append({
-                                    'text': text,
-                                    'x': center_x,
-                                    'y': center_y,
-                                    'area': area,
-                                    'confidence': 1.0,
-                                    'solidity': solidity
-                                })
-                                
-                                # Draw character detection
-                                cv2.circle(debug_image, (center_x, center_y), 10, (0, 255, 0), -1)
-                                cv2.putText(debug_image, text,
-                                          (center_x - 15, center_y - 15),
-                                          cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 2)
-                                break
-                except Exception as e:
-                    logger.warning(f"OCR failed for element at ({center_x}, {center_y}): {str(e)}")
-                    continue
-        
-        # Grid creation section
-        markers = detect_red_markers(image)
-        if len(markers) == 4:
-            corners = {m['type']: m for m in markers}
-            
-            # Create and draw outer bounding box exactly on markers
-            outer_box = np.array([
-                [corners['top_left']['x'], corners['top_left']['y']],
-                [corners['top_right']['x'], corners['top_right']['y']],
-                [corners['bottom_right']['x'], corners['bottom_right']['y']],
-                [corners['bottom_left']['x'], corners['bottom_left']['y']]
-            ], np.int32)
-            cv2.polylines(debug_image, [outer_box], True, (0, 255, 255), 2)
-            
-            # Calculate grid dimensions from markers
-            grid_width = abs(corners['top_right']['x'] - corners['top_left']['x'])
-            grid_height = abs(corners['bottom_left']['y'] - corners['top_left']['y'])
-            
-            num_rows = len(set(c['y'] for c in grid_cells))
-            num_cols = len(set(c['x'] for c in grid_cells))
-            
-            cell_width = grid_width / num_cols
-            cell_height = grid_height / num_rows
-            
-            # Map elements to cells
-            updated_cells = []
-            processed_elements = set()
-            
-            for row in range(num_rows):
-                for col in range(num_cols):
-                    cell = next((c for c in grid_cells 
-                               if int(c['x']) == col + 1 and 
-                               int(c['y']) == num_rows - row), None)
-                    
-                    if cell:
-                        cell_data = cell.copy()
-                        cell_data['element'] = 'none'
-                        
-                        # Calculate exact cell boundaries from markers
-                        cell_left = corners['top_left']['x'] + (col * cell_width)
-                        cell_right = cell_left + cell_width
-                        cell_top = corners['top_left']['y'] + (row * cell_height)
-                        cell_bottom = cell_top + cell_height
-                        
-                        # Find elements in this cell
-                        cell_elements = [
-                            element for element in all_elements
-                            if (element['text'] not in processed_elements and
-                                cell_left <= element['x'] < cell_right and
-                                cell_top <= element['y'] <= cell_bottom)
-                        ]
-                        
-                        if cell_elements:
-                            cell_center_x = cell_left + cell_width/2
-                            cell_center_y = cell_top + cell_height/2
-                            
-                            best_element = min(cell_elements,
-                                key=lambda e: ((e['x'] - cell_center_x)**2 + 
-                                             (e['y'] - cell_center_y)**2))
-                            
-                            cell_data['element'] = best_element['text']
-                            processed_elements.add(best_element['text'])
-                        
-                        # Always draw cell boundaries
-                        cv2.rectangle(debug_image, 
-                                    (int(cell_left), int(cell_top)),
-                                    (int(cell_right), int(cell_bottom)),
-                                    (0, 255, 0) if cell_data['element'] != 'none' else (0, 0, 255),
-                                    2)
-                        
-                        if cell_data['element'] != 'none':
-                            cv2.putText(debug_image,
-                                      cell_data['element'],
-                                      (int(cell_left + 5), int(cell_bottom - 5)),
-                                      cv2.FONT_HERSHEY_SIMPLEX,
-                                      0.7,
-                                      (255, 0, 0),
-                                      2)
-                        
-                        updated_cells.append(cell_data)
-            
-            # Save single debug image with all information
-            cv2.imwrite(os.path.join(DEBUG_DIR, 'grid_detection_debug.png'), debug_image)
-            return updated_cells
-        
-        return [{**cell, 'element': 'none'} for cell in grid_cells]
+        # Save debug visualization
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'text_detection_debug.png'), debug_image)
+        return processed_cells
         
     except Exception as e:
         logger.error(f"Error in detect_text_elements: {str(e)}")
@@ -478,26 +355,6 @@ def process_grid_image(image_path, num_cols=None, num_rows=None):
         logger.info(f"Grid dimensions: {num_cols}x{num_rows}")
 
         # Load image
-        image = cv2.imread(image_path)
-        logger.debug(f"Loaded image shape: {image.shape}")
-        cv2.imwrite(os.path.join(DEBUG_DIR, 'debug_original.png'), image)
-
-        # Validate inputs
-        if not image_path:
-            raise ValueError("Image path cannot be empty")
-        
-        logger.info(f"Processing image: {image_path}")
-        logger.info(f"Grid dimensions: {num_cols}x{num_rows}")
-        
-        # Check if file exists
-        import os
-        if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Image file not found: {image_path}")
-            
-        if num_cols is None or num_rows is None:
-            raise ValueError("Number of columns and rows must be specified")
-
-        # Load image with error checking
         image = cv2.imread(image_path)
         if image is None:
             raise IOError(f"Failed to load image from {image_path}")
