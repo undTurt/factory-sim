@@ -26,11 +26,9 @@ venv/
 ENV/
 
 # Debug and logs
-backend/debug/
-backend/uploads
-*.log
-logs/
 debug/
+logs/
+*.log
 uploads/
 
 # IDE - VSCode
@@ -45,7 +43,6 @@ uploads/
 *.swo
 
 # Project specific
-uploads/
 arduino_data/
 
 # Database
