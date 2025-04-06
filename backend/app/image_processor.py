@@ -7,6 +7,9 @@ from pytesseract import Output # type: ignore
 import logging
 import os
 
+DEBUG_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'debug')
+os.makedirs(DEBUG_DIR, exist_ok=True)
+
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -53,7 +56,7 @@ def detect_red_markers(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         # Save grayscale debug
-        cv2.imwrite('debug_grayscale.png', gray)
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'debug_grayscale.png'), gray)
         
         # Try multiple threshold approaches
         markers = []
@@ -82,7 +85,7 @@ def detect_red_markers(image):
         
         # Save debug masks
         for idx, mask in enumerate(masks):
-            cv2.imwrite(f'corners_mask_{idx}_debug.png', mask)
+            cv2.imwrite(os.path.join(DEBUG_DIR, f'corners_mask_{idx}_debug.png'), mask)
         
         for mask in masks:
             # Apply morphological operations
@@ -141,7 +144,7 @@ def detect_red_markers(image):
                        (marker['x'] - 20, marker['y'] - 20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
         
-        cv2.imwrite('corners_detection_debug.png', debug_image)
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'corners_detection_debug.png'), debug_image)
         
         logger.debug(f"Found {len(markers)} markers")
         
@@ -159,11 +162,11 @@ def detect_red_markers(image):
 
 def save_debug_visualizations(image, mask, corners):
     """Save debug visualizations"""
-    cv2.imwrite('mask_debug.png', mask)
+    cv2.imwrite(os.path.join(DEBUG_DIR, 'mask_debug.png'), mask)
     debug_image = image.copy()
     for corner in corners:
         cv2.circle(debug_image, (corner['x'], corner['y']), 10, (0, 255, 0), -1)
-    cv2.imwrite('corners_debug.png', debug_image)
+    cv2.imwrite(os.path.join(DEBUG_DIR, 'corners_debug.png'), debug_image)
 
 def draw_grid_debug(image, grid_cells, num_cols, num_rows):
     """Draw grid and detected elements for debugging"""
@@ -203,7 +206,7 @@ def draw_grid_debug(image, grid_cells, num_cols, num_rows):
                        (text_x, text_y),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     
-    cv2.imwrite('grid_debug.png', debug_image)
+    cv2.imwrite(os.path.join(DEBUG_DIR, 'grid_debug.png'), debug_image)
 
 # ...existing imports and helper functions remain unchanged until detect_text_elements...
 
@@ -236,7 +239,7 @@ def detect_text_elements(image, grid_cells):
         ]
         
         # Save preprocessing debug image
-        cv2.imwrite('preprocess_debug.png', gray)
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'preprocess_debug.png'), gray)
         
         # Initialize elements list
         all_elements = []
@@ -255,7 +258,7 @@ def detect_text_elements(image, grid_cells):
             black_mask = cv2.morphologyEx(black_mask, cv2.MORPH_CLOSE, kernel_close)
             
             # Save threshold debug image
-            cv2.imwrite(f'threshold_{thresh}_debug.png', black_mask)
+            cv2.imwrite(os.path.join(DEBUG_DIR, f'threshold_{thresh}_debug.png'), black_mask)
             
             contours_all = []
             for mode in [cv2.RETR_EXTERNAL, cv2.RETR_LIST]:
@@ -408,7 +411,7 @@ def detect_text_elements(image, grid_cells):
                         updated_cells.append(cell_data)
             
             # Save single debug image with all information
-            cv2.imwrite('grid_detection_debug.png', debug_image)
+            cv2.imwrite(os.path.join(DEBUG_DIR, 'grid_detection_debug.png'), debug_image)
             return updated_cells
         
         return [{**cell, 'element': 'none'} for cell in grid_cells]
@@ -477,7 +480,7 @@ def process_grid_image(image_path, num_cols=None, num_rows=None):
         # Load image
         image = cv2.imread(image_path)
         logger.debug(f"Loaded image shape: {image.shape}")
-        cv2.imwrite('debug_original.png', image)
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'debug_original.png'), image)
 
         # Validate inputs
         if not image_path:
@@ -500,7 +503,7 @@ def process_grid_image(image_path, num_cols=None, num_rows=None):
             raise IOError(f"Failed to load image from {image_path}")
             
         logger.debug(f"Loaded image shape: {image.shape}")
-        cv2.imwrite('debug_original.png', image)
+        cv2.imwrite(os.path.join(DEBUG_DIR, 'debug_original.png'), image)
 
         try:
             corners = detect_red_markers(image)
