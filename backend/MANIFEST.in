@@ -1,0 +1,3 @@
+include pyproject.toml
+include requirements.txt
+recursive-include app *

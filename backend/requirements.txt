@@ -1,5 +1,21 @@
-flask==2.0.1
+# Web Framework
+Flask==2.0.1
 flask-cors==3.0.10
-opencv-python==4.5.3.56
+
+# Image Processing
+opencv-python-headless==4.5.3.56
 numpy==1.21.2
-pillow==8.3.2
+Pillow==8.3.2
+pytesseract==0.3.8
+
+# Serial Communication
+pyserial==3.5
+
+# File System Monitoring
+watchdog==2.1.6
+
+# Logging and Debug
+python-json-logger==2.0.2
+
+# Development Tools
+python-dotenv==0.19.0
